@@ -31,8 +31,6 @@
 #include "pil.h"
 #include "pil_io.h"
 
-#include <spi_lcd.h>
-
 #define MAX_PATH 260
 static char szIn[MAX_PATH];
 int bCenter, iLoopCount;
@@ -42,7 +40,6 @@ struct fb_var_screeninfo vinfo;
 struct fb_fix_screeninfo finfo;
 long int screensize = 0;
 char *fbp = 0;
-static int bLCD;
 extern void PILCountGIFPages(PIL_FILE *pFile);
 extern int PILReadGIF(PIL_PAGE *pPage, PIL_FILE *pFile, int iRequestedPage);
 extern int PILDecodeLZW(PIL_PAGE *pIn, PIL_PAGE *pOut, PILBOOL bGIF, int iOptions);
@@ -71,7 +68,6 @@ void ShowHelp(void)
 	"valid options:\n\n"
         " --in <infile>       Input file\n"
 	" --c                 Center on the display\n"
-        " --dev <device>      Destination device (defaults to fb0), or lcd\n"
 	" --loop N            Loop the animation N times\n"
     );
 }
@@ -80,51 +76,24 @@ void ShowHelp(void)
 //
 void ShowFrame(PIL_PAGE *pPage)
 {
-int tx, ty, cx, cy, x, y, w, h;
+int  cx, cy, y, w, h;
 unsigned char *s, *d;
 
-	tx = ty = 16;
 	w = pPage->iWidth;
 	h = pPage->iHeight;
 	d = NULL;
 	if (bCenter)
 	{
-		if (bLCD)
-		{
-		if (w > 320) w = 320;
-		if (h > 240) h = 240;
-		cx = (320 - w)/2;
-		cy = (240 - h)/2;
-		}
-		else
-		{
 		cx = (vinfo.xres - w) / 2; // center on page
 		cy = (vinfo.yres - h) / 2;
-		}
 	}
 	else
 	{
 		cx = cy = 0;
 	}
-	if (bLCD)
-	{
-	for (y=0; y<h; y+=16)
-	{
-		ty = 16;
-		if (h - y < 16)
-			ty = h - y;
-		for (x=0; x<w; x+=16)
-		{
-			s = pPage->pData + (y * pPage->iPitch) + x * 2;
-			tx = 16;
-			if (w - x < 16)
-				tx = w - x;
-			spilcdDrawTile(x+cx,y+cy, tx, ty, s, pPage->iPitch);
-		}
-	} // for y
-	}
-	else
-	{
+#ifdef DEBUG_LOG
+	printf("iX:%d iY:%d iCX:%d iCY:%d iOffset:%d iTransparent:%d\n",pPage->iX, pPage->iY, pPage->iCX, pPage->iCY, pPage->iOffset, pPage->iTransparent); 
+#endif
 	d = (unsigned char *)fbp + (cy * iPitch) + ((cx * vinfo.bits_per_pixel)/8);	
 	s = pPage->pData;
 	for (y=0; y<pPage->iHeight; y++)
@@ -132,7 +101,6 @@ unsigned char *s, *d;
 		memcpy(d, s, pPage->iPitch);
 		d += iPitch;
 		s += pPage->iPitch;
-	}
 	}
 } /* ShowFrame() */
 
@@ -142,9 +110,8 @@ static void parse_opts(int argc, char *argv[])
 int i = 1;
 
     bCenter = 0;
-    bLCD = 0;
     iLoopCount = 1;
-    strcpy(szDev, "fb0"); // destination frame buffer
+    strcpy(szDev, "fb1"); // destination frame buffer
     szIn[0] = '\0';
 
     while (i < argc)
@@ -163,10 +130,6 @@ int i = 1;
         /* test for each specific flag */
         if (0 == strcmp("--in", argv[i])) {
             strcpy(szIn, argv[i+1]);
-            i += 2;
-	} else if (0 == strcmp("--dev", argv[i])) {
-	    strcpy(szDev,argv[i+1]);
-	    bLCD = (strcmp(szDev,"lcd") == 0);
             i += 2;
         } else if (0 == strcmp("--c", argv[i])) {
             i ++;
@@ -191,7 +154,7 @@ int main( int argc, char *argv[ ], char *envp[ ] )
 PIL_FILE pf;
 PIL_PAGE pp1, pp2;
 int err;
-int i, rc, iLoop;
+int i, iLoop;
 int iTime;
 char szTemp[32];
 void *pFile;
@@ -223,20 +186,6 @@ void *pFile;
 			return -1;
 		}
 		PILCountGIFPages(&pf);
-   if (bLCD)
-   {
-// LCD type, flip 180, SPI channel, D/C, RST, LCD
-   rc = spilcdInit(LCD_ILI9342, 0, 0, 32000000, 13, 11, 18);
-   if (rc != 0)
-   {
-	   printf("Error initializing LCD\n");
-	   PILClose(&pf);
-	   return -1;
-   }
-//   spilcdSetOrientation(LCD_ORIENTATION_ROTATED);
-   }
-   else
-   {
    // Open the file for reading and writing
    sprintf(szTemp, "/dev/%s", szDev); // destination framebuffer (defaults to fb0)
    fbfd = open(szTemp, O_RDWR);
@@ -281,16 +230,12 @@ printf("smem_len=%08x, line_length=%08x, mem can hold %d lines\n", finfo.smem_le
        printf("Failed to mmap.\n");
        return 1;
     }
-   } // !LCD
 
 		// Read each frame one at a time
 		memset(&pp2, 0, sizeof(pp2));
 		pp2.iWidth = pf.iX;
 		pp2.iHeight = pf.iY;
-		if (bLCD)
-			pp2.cBitsperpixel = 16;
-		else
-			pp2.cBitsperpixel = vinfo.bits_per_pixel; // has to be same as display
+		pp2.cBitsperpixel = vinfo.bits_per_pixel; // has to be same as display
 		pp2.iPitch = (pp2.iWidth * pp2.cBitsperpixel)/8;
 		pp2.pData = PILIOAlloc(pp2.iPitch * pp2.iHeight);
 		pp2.iDataSize = pp2.iPitch * pp2.iHeight;
@@ -306,12 +251,15 @@ printf("smem_len=%08x, line_length=%08x, mem can hold %d lines\n", finfo.smem_le
 			iTime = MilliTime(); // get the current time in milliseconds
 //			printf("About to call PILReadGIF\n");
 	                err = PILReadGIF(&pp1, &pf, i);
+
         	        if (err)
                 	{       
                         	printf("PILReadGIF returned %d, datasize=%d\n", err, pp1.iDataSize);
                         	return -1;
                 	}
-
+#ifdef DEBUG_LOG
+	printf("pp1 ==> iX:%d iY:%d iTransparent:%d\n",pp1.iX, pp1.iY, pp1.iTransparent);
+#endif
 			memset(&ppSrc, 0, sizeof(ppSrc));
 			ppSrc.cCompression = PIL_COMP_NONE;
 			err = PILDecodeLZW(&pp1, &ppSrc, 1, 0);
@@ -320,6 +268,9 @@ printf("smem_len=%08x, line_length=%08x, mem can hold %d lines\n", finfo.smem_le
 				printf("PILDecodeLZW returned %d\n", err);
 				return -1;
 			}
+#ifdef DEBUG_LOG
+	printf("ppSrc ==> iX:%d iY:%d, iTransparent:%d\n",ppSrc.iX, ppSrc.iY, ppSrc.iTransparent);
+#endif			
 			if (i == 0) // get global color table from first frame
 			{
 				memcpy(pp2.pPalette, ppSrc.pPalette, 768);
@@ -327,6 +278,9 @@ printf("smem_len=%08x, line_length=%08x, mem can hold %d lines\n", finfo.smem_le
 //			printf("About to call PILAnimateGIF, framedelay = %d\n", pp2.iFrameDelay);
 			err = PILAnimateGIF(&pp2, &ppSrc);
 //			printf("returned from PILAnimateGIF\n");
+#ifdef DEBUG_LOG
+	printf("pp2 ==> iX:%d iY:%d, iTransparent:%d\n",pp2.iX, pp2.iY, pp2.iTransparent);
+#endif			
 			PILFree(&ppSrc);
 			PILFree(&pp1);
 			if (err == 0)

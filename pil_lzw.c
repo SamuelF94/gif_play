@@ -128,7 +128,9 @@ unsigned char c, *d, *p, *pOldPage;
 						if (pPage->iFrameDelay < 30) // 0-2 is going to make it run at 60fps; use 100 (10fps) as a reasonable substitute
 							pPage->iFrameDelay = 100;
 						if (pPage->cGIFBits & 1) // transparent color is used
-                           pPage->iTransparent = (int)p[iOffset+4]; // transparent color index
+						{
+                			           pPage->iTransparent = (int)p[iOffset+4]; // transparent color index
+						}
                         iOffset += 6;
                         }
 //                     else   // error
@@ -206,6 +208,9 @@ unsigned char c, *d, *p, *pOldPage;
          pPage->iY = INTELSHORT(&p[iOffset+2]);
          pPage->iWidth = INTELSHORT(&p[iOffset+4]);
          pPage->iHeight = INTELSHORT(&p[iOffset+6]);
+#ifdef DEBUG_LOG
+	printf("p[iOffset]:%d => iX:%d , &p[iOffset+2]:%d => iY:%d\n",p[iOffset], pPage->iX,p[iOffset+2], pPage->iY );
+#endif
          iOffset += 8;
    /* Image descriptor
      7 6 5 4 3 2 1 0    M=0 - use global color map, ignore pixel
@@ -323,6 +328,7 @@ uint32_t *pulPalette = NULL;
 	   return PIL_ERROR_BITDEPTH;
    if (pSrcPage->iX < 0 || pSrcPage->iY < 0 || (pSrcPage->iX + pSrcPage->iWidth) > pDestPage->iWidth || (pSrcPage->iY + pSrcPage->iHeight) > pDestPage->iHeight)
          return PIL_ERROR_INVPARAM; // bad parameter
+
 
    pPalette = (unsigned char *)PILIOAlloc(2048); // use global or local palette
    if (pPalette == NULL)
@@ -467,7 +473,9 @@ uint32_t *pulPalette = NULL;
          }
       memcpy((void *)pDestPage->lUser, pDestPage->pData, pDestPage->iDataSize);
       }
-
+#ifdef DEBUG_LOG
+	printf("AnimateGIF pSrcPage->cBitsperpixel:%d cTransparent:%d pDestPage->cBitsperpixel:%d\n",pSrcPage->cBitsperpixel, pSrcPage->iTransparent,pDestPage->cBitsperpixel);
+#endif
    switch (pSrcPage->cBitsperpixel)
       {
       case 4:
@@ -513,6 +521,9 @@ uint32_t *pulPalette = NULL;
 					  c = ((*s)>> 4) & 0xf;
 				   else
 					  c = (*s++) & 0xf;
+#ifdef DEBUG_LOG
+	printf("c:%d ",c);
+#endif			
 				  if (c != cTransparent)
 					 {
 					 *ds++ = pusPalette[c];
@@ -545,6 +556,9 @@ uint32_t *pulPalette = NULL;
             } // for y
          break;
       case 8:
+#ifdef DEBUG_LOG
+	printf("case 8 bits per pixel : pSrcPage->cGIFBits:%d\n",pSrcPage->cGIFBits);
+#endif			
          // Draw new sub-image onto animation bitmap
          if (pSrcPage->cGIFBits & 1) // if transparency used
             {
@@ -592,6 +606,9 @@ uint32_t *pulPalette = NULL;
 				   for (x=0; x<pSrcPage->iWidth; x++)
 					  {
 					  c = *s++;
+#ifdef DEBUG_LOG
+	printf("c:%d ",c);
+#endif			
 					  if (c != cTransparent)
 						 {
 						 *ds++ = pusPalette[c];
@@ -884,6 +901,11 @@ int PILDecodeLZW(PIL_PAGE *InPage, PIL_PAGE *OutPage, PILBOOL bGIF, int iOptions
 	OutPage->iHeight = InPage->iHeight;
 	OutPage->iFrameDelay = InPage->iFrameDelay;
 	OutPage->iPitch = PILCalcSize(InPage->iWidth, InPage->cBitsperpixel);
+
+	OutPage->iX = InPage->iX;
+	OutPage->iY = InPage->iY;
+	OutPage->iTransparent = InPage->iTransparent;
+	OutPage->cGIFBits=  InPage->cGIFBits;
 
 	/* Code limit is different for TIFF and GIF */
 	if (!bGIF)
